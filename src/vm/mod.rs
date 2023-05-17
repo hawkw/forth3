@@ -9,7 +9,7 @@ use core::{
 
 use crate::{
     dictionary::{
-        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind,
+        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind, FuncKind
     },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
@@ -90,7 +90,7 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
-                    func: bi,
+                    func: FuncKind::Func(bi),
                     name,
                     kind: EntryKind::RuntimeBuiltin,
                     len: 0,
@@ -166,7 +166,7 @@ impl<T> Forth<T> {
         }
     }
 
-    pub fn process_line(&mut self) -> Result<(), Error> {
+    pub async fn process_line(&mut self) -> Result<(), Error> {
         loop {
             self.input.advance();
             let word = match self.input.cur_word() {
@@ -182,7 +182,12 @@ impl<T> Forth<T> {
                         idx: 0,
                         len: dref.hdr.len,
                     })?;
-                    let res = (dref.hdr.func)(self);
+                    let res = match dref.hdr.func {
+                        FuncKind::Func(func) => func(self),
+                        FuncKind::AsyncBuiltin(idx) => {
+                            todo!("eliza: extract {idx}th async func and await its future...");
+                        }
+                    };
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
@@ -193,7 +198,12 @@ impl<T> Forth<T> {
                         idx: 0,
                         len: 0,
                     })?;
-                    let res = unsafe { (bi.as_ref().hdr.func)(self) };
+                    let res = match unsafe { &bi.as_ref().hdr.func } {
+                        FuncKind::Func(func) => func(self),
+                        FuncKind::AsyncBuiltin(idx) => {
+                            todo!("eliza: extract {idx}th async func and await its future...");
+                        }
+                    };
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
@@ -234,7 +244,7 @@ impl<T> Forth<T> {
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
-    pub fn interpret(&mut self) -> Result<(), Error> {
+    pub async fn interpret(&mut self) -> Result<(), Error> {
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
         //
@@ -258,7 +268,12 @@ impl<T> Forth<T> {
                 idx: 0,
                 len: ehref.len,
             })?;
-            let result = (ehref.func)(self);
+            let result = match ehref.func {
+                FuncKind::Func(func) => func(self),
+                FuncKind::AsyncBuiltin(idx) => {
+                    todo!("eliza: extract {idx}th async func and await its future...");
+                }
+            };
             self.call_stack.try_pop()?;
             result?;
             me = self.call_stack.try_peek()?;

@@ -1,7 +1,7 @@
 use core::{fmt::Write, mem::size_of};
 
 use crate::{
-    dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
+    dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind, FuncKind},
     fastr::comptime_fastr,
     vm::TmpFaStr,
     word::Word,
@@ -19,7 +19,7 @@ macro_rules! builtin {
         BuiltinEntry {
             hdr: EntryHeader {
                 name: comptime_fastr($name),
-                func: $func,
+                func: FuncKind::Func($func),
                 kind: EntryKind::StaticBuiltin,
                 len: 0,
             },

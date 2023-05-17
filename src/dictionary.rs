@@ -17,9 +17,15 @@ pub enum EntryKind {
     Dictionary,
 }
 
+pub enum FuncKind<T: 'static> {
+    /// index into an array of generically typed async builtins
+    AsyncBuiltin(u8),
+    Func(WordFunc<T>)
+}
+
 #[repr(C)]
 pub struct EntryHeader<T: 'static> {
-    pub func: WordFunc<T>,
+    pub func: FuncKind<T>,
     pub name: FaStr,
     pub kind: EntryKind, // todo
     pub len: u16,

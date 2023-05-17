@@ -1,15 +1,18 @@
 use core::{
     fmt::Write,
+    future::Future,
     mem::size_of,
     num::NonZeroU16,
     ops::{Deref, Neg},
+    pin::Pin,
     ptr::NonNull,
     str::FromStr,
+    task::{Context, Poll},
 };
 
 use crate::{
     dictionary::{
-        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind, FuncKind
+        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind, FuncKind,
     },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
@@ -38,6 +41,23 @@ pub struct Forth<T: 'static> {
     pub output: OutputBuf,
     pub host_ctxt: T,
     builtins: &'static [BuiltinEntry<T>],
+}
+
+pub struct AsyncBuiltins<
+    T: 'static,
+    A0 = NoAsyncBuiltin,
+    A1 = NoAsyncBuiltin,
+    A2 = NoAsyncBuiltin,
+    A3 = NoAsyncBuiltin,
+    A4 = NoAsyncBuiltin,
+    A5 = NoAsyncBuiltin,
+> {
+    pub a0: fn(&mut Forth<T>) -> A0,
+    pub a1: fn(&mut Forth<T>) -> A1,
+    pub a2: fn(&mut Forth<T>) -> A2,
+    pub a3: fn(&mut Forth<T>) -> A3,
+    pub a4: fn(&mut Forth<T>) -> A4,
+    pub a5: fn(&mut Forth<T>) -> A5,
 }
 
 impl<T> Forth<T> {
@@ -166,7 +186,18 @@ impl<T> Forth<T> {
         }
     }
 
-    pub async fn process_line(&mut self) -> Result<(), Error> {
+    pub async fn process_line<A0, A1, A2, A3, A4, A5>(
+        &mut self,
+        async_builtins: &AsyncBuiltins<T, A0, A1, A2, A3, A4, A5>,
+    ) -> Result<(), Error>
+    where
+        A0: Future<Output = Result<(), Error>>,
+        A1: Future<Output = Result<(), Error>>,
+        A2: Future<Output = Result<(), Error>>,
+        A3: Future<Output = Result<(), Error>>,
+        A4: Future<Output = Result<(), Error>>,
+        A5: Future<Output = Result<(), Error>>,
+    {
         loop {
             self.input.advance();
             let word = match self.input.cur_word() {
@@ -182,12 +213,7 @@ impl<T> Forth<T> {
                         idx: 0,
                         len: dref.hdr.len,
                     })?;
-                    let res = match dref.hdr.func {
-                        FuncKind::Func(func) => func(self),
-                        FuncKind::AsyncBuiltin(idx) => {
-                            todo!("eliza: extract {idx}th async func and await its future...");
-                        }
-                    };
+                    let res = dref.hdr.invoke(self, async_builtins).await;
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
@@ -198,12 +224,7 @@ impl<T> Forth<T> {
                         idx: 0,
                         len: 0,
                     })?;
-                    let res = match unsafe { &bi.as_ref().hdr.func } {
-                        FuncKind::Func(func) => func(self),
-                        FuncKind::AsyncBuiltin(idx) => {
-                            todo!("eliza: extract {idx}th async func and await its future...");
-                        }
-                    };
+                    let res = unsafe { bi.as_ref().hdr.invoke(self, async_builtins) }.await;
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
@@ -244,7 +265,18 @@ impl<T> Forth<T> {
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
-    pub async fn interpret(&mut self) -> Result<(), Error> {
+    pub async fn interpret<A0, A1, A2, A3, A4, A5>(
+        &mut self,
+        async_builtins: &AsyncBuiltins<T, A0, A1, A2, A3, A4, A5>,
+    ) -> Result<(), Error>
+    where
+        A0: Future<Output = Result<(), Error>>,
+        A1: Future<Output = Result<(), Error>>,
+        A2: Future<Output = Result<(), Error>>,
+        A3: Future<Output = Result<(), Error>>,
+        A4: Future<Output = Result<(), Error>>,
+        A5: Future<Output = Result<(), Error>>,
+    {
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
         //
@@ -268,12 +300,7 @@ impl<T> Forth<T> {
                 idx: 0,
                 len: ehref.len,
             })?;
-            let result = match ehref.func {
-                FuncKind::Func(func) => func(self),
-                FuncKind::AsyncBuiltin(idx) => {
-                    todo!("eliza: extract {idx}th async func and await its future...");
-                }
-            };
+            let result = ehref.invoke(self, async_builtins).await;
             self.call_stack.try_pop()?;
             result?;
             me = self.call_stack.try_peek()?;
@@ -538,7 +565,7 @@ impl<T> Forth<T> {
                 hdr: EntryHeader {
                     // TODO: Should we look up `(constant)` for consistency?
                     // Use `find_word`?
-                    func: Self::constant,
+                    func: FuncKind::Func(Self::constant),
                     name,
                     kind: EntryKind::Dictionary,
                     len: 1,
@@ -568,7 +595,7 @@ impl<T> Forth<T> {
                 hdr: EntryHeader {
                     // TODO: Should we look up `(variable)` for consistency?
                     // Use `find_word`?
-                    func: Self::variable,
+                    func: FuncKind::Func(Self::variable),
                     name,
                     kind: EntryKind::Dictionary,
                     len: 1,
@@ -613,7 +640,7 @@ impl<T> Forth<T> {
                     //
                     // TODO: Should we look up `(variable)` for consistency?
                     // Use `find_word`?
-                    func: Self::variable,
+                    func: FuncKind::Func(Self::variable),
                     name,
                     kind: EntryKind::Dictionary,
                     len: count_u16.into(),
@@ -625,5 +652,29 @@ impl<T> Forth<T> {
         }
         self.run_dict_tail = Some(dict_base);
         Ok(0)
+    }
+}
+
+impl<T> AsyncBuiltins<T> {
+    pub fn none() -> Self {
+        fn no<T>(_: &mut Forth<T>) -> NoAsyncBuiltin {
+            NoAsyncBuiltin(())
+        }
+        AsyncBuiltins {
+            a0: no,
+            a1: no,
+            a2: no,
+            a3: no,
+            a4: no,
+            a5: no,
+        }
+    }
+}
+
+struct NoAsyncBuiltin(());
+impl Future for NoAsyncBuiltin {
+    type Output = Result<(), Error>;
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(Err(Error::LookupFailed))
     }
 }

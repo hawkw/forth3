@@ -19,7 +19,7 @@ macro_rules! builtin {
         BuiltinEntry {
             hdr: EntryHeader {
                 name: comptime_fastr($name),
-                func: FuncKind::Func($func),
+                func: FuncKind::Builtin($func),
                 kind: EntryKind::StaticBuiltin,
                 len: 0,
             },

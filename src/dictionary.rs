@@ -1,6 +1,7 @@
 use crate::fastr::FaStr;
-use crate::{Word, WordFunc};
+use crate::{Error, Forth, Word, WordFunc};
 use core::alloc::Layout;
+use core::future::Future;
 use core::ptr::addr_of_mut;
 use core::ptr::NonNull;
 
@@ -18,9 +19,15 @@ pub enum EntryKind {
 }
 
 pub enum FuncKind<T: 'static> {
+    Func(WordFunc<T>),
     /// index into an array of generically typed async builtins
-    AsyncBuiltin(u8),
-    Func(WordFunc<T>)
+    A0,
+    A1,
+    A2,
+    A3,
+    A4,
+    A5,
+    Interpret,
 }
 
 #[repr(C)]
@@ -168,6 +175,33 @@ impl DictionaryBump {
 
     pub fn used(&self) -> usize {
         (self.cur as usize) - (self.start as usize)
+    }
+}
+
+impl<T: 'static> EntryHeader<T> {
+    pub(crate) async fn invoke<A0, A1, A2, A3, A4, A5>(
+        &self,
+        forth: &mut Forth<T>,
+        async_builtins: &crate::vm::AsyncBuiltins<T, A0, A1, A2, A3, A4, A5>,
+    ) -> Result<(), Error>
+    where
+        A0: Future<Output = Result<(), Error>>,
+        A1: Future<Output = Result<(), Error>>,
+        A2: Future<Output = Result<(), Error>>,
+        A3: Future<Output = Result<(), Error>>,
+        A4: Future<Output = Result<(), Error>>,
+        A5: Future<Output = Result<(), Error>>,
+    {
+        match self.func {
+            FuncKind::A0 => (async_builtins.a0)(forth).await,
+            FuncKind::A1 => (async_builtins.a1)(forth).await,
+            FuncKind::A2 => (async_builtins.a2)(forth).await,
+            FuncKind::A3 => (async_builtins.a3)(forth).await,
+            FuncKind::A4 => (async_builtins.a4)(forth).await,
+            FuncKind::A5 => (async_builtins.a5)(forth).await,
+            FuncKind::Func(func) => func(forth),
+            FuncKind::Interpret => todo!("eliza: since `interpret` is an async fn, this creates a recursive async fn...fuck. wat do???")
+        }
     }
 }
 
